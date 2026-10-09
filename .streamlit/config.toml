@@ -1,0 +1,7 @@
+[server]
+# local only: the dashboard has no login, so it must not be reachable from the network
+address = "127.0.0.1"
+port = 8501
+
+[browser]
+gatherUsageStats = false

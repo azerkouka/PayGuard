@@ -122,6 +122,16 @@ def publish(
     return sent
 
 
+def make_producer() -> Producer:
+    return Producer(
+        {
+            "bootstrap.servers": settings.kafka_bootstrap_servers,
+            "enable.idempotence": True,  # retries can neither duplicate nor reorder messages
+            "linger.ms": 10,  # small batches: a few ms of delay for far fewer requests
+        }
+    )
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="Publish simulated transactions to Kafka.")
     parser.add_argument("--rate", type=float, default=settings.stream_rate, help="tx per second")
@@ -132,16 +142,9 @@ def main() -> None:
     parser.add_argument("--topic", default=settings.kafka_transactions_topic)
     args = parser.parse_args()
 
-    producer = Producer(
-        {
-            "bootstrap.servers": settings.kafka_bootstrap_servers,
-            "enable.idempotence": True,  # retries can neither duplicate nor reorder messages
-            "linger.ms": 10,  # small batches: a few ms of delay for far fewer requests
-        }
-    )
     transactions = transaction_stream(args.seed, args.start_date, fraud_rate=args.fraud_rate)
     print(f"publishing to '{args.topic}' at {args.rate:g} tx/s (Ctrl+C to stop)")
-    publish(transactions, producer, args.topic, args.rate, args.duration)
+    publish(transactions, make_producer(), args.topic, args.rate, args.duration)
 
 
 if __name__ == "__main__":

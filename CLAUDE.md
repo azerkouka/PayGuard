@@ -39,6 +39,7 @@ dashboard/       Streamlit analyst dashboard
 infra/           init.sql and other infrastructure files
 scripts/         small operational scripts (health check, benchmark)
 tests/           pytest unit tests (no Docker required)
+docs/            plots shown in the README (copied from models/ after training)
 data/            generated Parquet files (git-ignored)
 models/          trained model, feature list, metrics, plots (git-ignored)
 ```
@@ -46,20 +47,26 @@ models/          trained model, feature list, metrics, plots (git-ignored)
 ## Commands
 
 ```
+make install     pip install -r requirements.txt (into the active virtual environment)
 make up          start Kafka, Redis, PostgreSQL (docker compose up -d --wait)
-make check       python -m scripts.check_infra
-make reset       wipe all volumes and start again
 make generate    python -m simulator.generate --days 90 --seed 42
 make train       python -m ml.train
-make bootstrap   python -m streaming.bootstrap (load users' historical state into Redis)
+make stream      python -m scripts.run_pipeline (history load + consumer + simulator, Ctrl+C to stop)
+make dashboard   streamlit run dashboard/app.py (second terminal)
+
+make bootstrap   python -m streaming.bootstrap (load the history into Redis and PostgreSQL)
 make consume     python -m streaming.scoring_consumer (features + scoring + alerts)
-make benchmark   python -m scripts.benchmark (2 minutes, prints latency and throughput)
+make simulate    python -m simulator.stream --rate 50 (simulator only)
 make api         uvicorn api.main:app --port 8010
-make stream      python -m simulator.stream --rate 50
-make dashboard   streamlit run dashboard/app.py
+make benchmark   python -m scripts.benchmark (2 minutes, prints latency and throughput)
+make check       python -m scripts.check_infra
+make reset       wipe all volumes and start again
 make test        pytest
 make lint        ruff check .
 ```
+
+From a clean clone the sequence is: `make install`, `make up`, `make generate`, `make train`,
+`make stream`, `make dashboard`.
 
 `make` is not installed by default on Windows; the underlying commands can be run directly.
 
