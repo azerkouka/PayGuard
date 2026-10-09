@@ -11,16 +11,20 @@ from pathlib import Path
 # `streamlit run` puts dashboard/ on the import path, not the project root
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-import pandas as pd  # noqa: E402
-import psycopg  # noqa: E402
-import streamlit as st  # noqa: E402
+import pandas as pd
+import psycopg
+import streamlit as st
 
-from dashboard import queries  # noqa: E402
+from dashboard import queries
+from schema import LOCAL_TIMEZONE
 
 KPI_WINDOW_MINUTES = 5
 HISTORY_ROWS = 15
-TYPE_NAMES = {"p2p_transfer": "P2P transfer", "merchant_payment": "Merchant payment",
-              "mobile_topup": "Mobile top-up"}  # fmt: skip
+TYPE_NAMES = {
+    "p2p_transfer": "P2P transfer",
+    "merchant_payment": "Merchant payment",
+    "mobile_topup": "Mobile top-up",
+}
 LABEL_NAMES = {"fraud": "Confirmed fraud", "false_positive": "False positive"}
 
 
@@ -49,7 +53,7 @@ def show_queue(alerts: pd.DataFrame, key: str) -> None:
     table = pd.DataFrame(
         {
             "Scored at": pd.to_datetime(alerts["scored_at"], utc=True)
-            .dt.tz_convert("Africa/Tunis")
+            .dt.tz_convert(LOCAL_TIMEZONE)
             .dt.strftime("%H:%M:%S"),
             "Decision": alerts["decision"],
             "Score": alerts["score"],
@@ -109,8 +113,9 @@ def show_alert(alert: pd.Series) -> bool:
 
     st.markdown(f"**This user's last {HISTORY_ROWS} transactions**")
     history = queries.user_history(alert["user_id"], alert["timestamp"], HISTORY_ROWS)
-    history.insert(0, "", (history["transaction_id"] == alert["transaction_id"]).map(
-        {True: "▶", False: ""}))  # fmt: skip
+    history.insert(
+        0, "", (history["transaction_id"] == alert["transaction_id"]).map({True: "▶", False: ""})
+    )
     history["type"] = history["type"].map(TYPE_NAMES)
     history["decision"] = history["decision"].fillna("")
     st.dataframe(

@@ -8,10 +8,10 @@ import numpy as np
 import pandas as pd
 
 from config import settings
+from schema import COLUMNS
 from simulator.legit import BURST_INFLATION, add_bursts, build_legit, sample_users_and_times
-from simulator.profiles import LifeEvents, Population, build_population, plan_life_events
-from simulator.scenarios import Seen, inject_fraud
-from simulator.schema import finalize
+from simulator.profiles import Population, build_population, plan_life_events
+from simulator.scenarios import FraudContext, inject_fraud
 
 DEFAULT_OUTPUT = settings.data_dir / "transactions.parquet"
 DEFAULT_START_DATE = "2026-01-01"
@@ -22,27 +22,35 @@ DEFAULT_TRANSACTIONS = 500_000
 DEFAULT_FRAUD_RATE = 0.015
 
 
+def new_transaction_ids(n: int, rng: np.random.Generator) -> list[str]:
+    return [f"{x:016x}" for x in rng.integers(0, 2**63, n)]
+
+
+def finalize(df: pd.DataFrame, rng: np.random.Generator) -> pd.DataFrame:
+    """Sort by time, assign transaction ids and enforce column order and dtypes."""
+    df = df.sort_values("timestamp", kind="stable").reset_index(drop=True)
+    df["transaction_id"] = new_transaction_ids(len(df), rng)
+    df["timestamp"] = df["timestamp"].astype("datetime64[ns]")
+    df["amount_tnd"] = df["amount_tnd"].astype("float64")
+    df["is_fraud"] = df["is_fraud"].astype(bool)
+    return df[COLUMNS]
+
+
 def generate_window(
-    pop: Population,
-    events: LifeEvents,
-    start: np.datetime64,
-    days: int,
-    n_transactions: int,
-    fraud_rate: float,
-    rng: np.random.Generator,
-    seen: Seen | None = None,
+    ctx: FraudContext, start: np.datetime64, days: int, n_transactions: int, fraud_rate: float
 ) -> pd.DataFrame:
     """Legit and fraudulent transactions between `start` and `start + days`, unsorted.
 
-    Shared by the batch generator (one 90-day window) and the stream (one day at a time).
-    A few transactions end shortly after the window: bursts and incidents started near its end.
+    Shared by the batch generator (one 90-day window) and the stream (one day at a time, with
+    the same `ctx`). A few transactions end shortly after the window: bursts and incidents
+    started near its end.
     """
     n_base = round(n_transactions * (1 - fraud_rate) / BURST_INFLATION)  # bursts add rows
-    u, ts = sample_users_and_times(pop, n_base, start, days, rng)
-    legit = add_bursts(build_legit(pop, events, u, ts, rng), rng)
+    u, ts = sample_users_and_times(ctx.pop, n_base, start, days, ctx.rng)
+    legit = add_bursts(build_legit(ctx.pop, ctx.events, u, ts, ctx.rng), ctx.rng)
 
     n_fraud = round(len(legit) * fraud_rate / (1 - fraud_rate))
-    fraud = inject_fraud(pop, events, n_fraud, start, days, rng, seen=seen)
+    fraud = inject_fraud(ctx, n_fraud, start, days)
     return pd.concat([legit, fraud], ignore_index=True)
 
 
@@ -62,7 +70,8 @@ def generate_dataset(
     pop = build_population(n_users, n_merchants, rng)
     events = plan_life_events(pop, start, days, rng)
 
-    df = generate_window(pop, events, start, days, n_transactions, fraud_rate, rng)
+    ctx = FraudContext(pop, events, rng)
+    df = generate_window(ctx, start, days, n_transactions, fraud_rate)
     return finalize(df, rng), pop
 
 

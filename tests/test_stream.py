@@ -2,10 +2,10 @@ from itertools import islice
 
 import pandas as pd
 
-from simulator.schema import COLUMNS, decode_transaction, encode_transaction
+from schema import COLUMNS, decode_transaction, encode_transaction
 from simulator.stream import publish, transaction_stream
 
-SMALL = dict(tx_per_day=2000, n_users=200, n_merchants=40)
+SMALL = {"tx_per_day": 2000, "n_users": 200, "n_merchants": 40}
 
 
 def take(n, seed=1):

@@ -45,8 +45,14 @@ def test_block_threshold_reaches_the_precision_target():
 
 def test_train_writes_artifacts(trained_models):
     out_dir, metrics = trained_models
-    for name in ("model.json", "features.json", "threshold.json", "metrics.json",
-                 "threshold_cost.png", "shap_importance.png"):  # fmt: skip
+    for name in (
+        "model.json",
+        "features.json",
+        "threshold.json",
+        "metrics.json",
+        "threshold_cost.png",
+        "shap_importance.png",
+    ):
         assert (out_dir / name).exists()
     assert json.loads((out_dir / "metrics.json").read_text()) == metrics
     thresholds = metrics["threshold"]

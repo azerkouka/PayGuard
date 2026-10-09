@@ -36,6 +36,12 @@ def check_postgres() -> str:
     return "tables " + ", ".join(sorted(TABLES))
 
 
+def describe_error(exc: Exception) -> str:
+    """First line of an error, safe to print on any console encoding."""
+    reason = str(exc).strip().splitlines()[0].encode("ascii", "replace").decode()
+    return f"{type(exc).__name__}: {reason}"
+
+
 def main() -> None:
     checks = {"kafka": check_kafka, "redis": check_redis, "postgres": check_postgres}
     failed = False
@@ -44,8 +50,7 @@ def main() -> None:
             print(f"OK    {name:<9} {check()}")
         except Exception as exc:  # report every service, whatever the failure
             failed = True
-            reason = str(exc).strip().splitlines()[0].encode("ascii", "replace").decode()
-            print(f"FAIL  {name:<9} {type(exc).__name__}: {reason}")
+            print(f"FAIL  {name:<9} {describe_error(exc)}")
     sys.exit(1 if failed else 0)
 
 

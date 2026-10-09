@@ -44,6 +44,11 @@ class Population:
     def n_users(self) -> int:
         return len(self.users)
 
+    @property
+    def n_shops(self) -> int:
+        """Merchants that are not telecom operators; they come first in `merchants`."""
+        return len(self.merchants) - N_TELECOM_OPERATORS
+
 
 @dataclass(frozen=True)
 class LifeEvents:

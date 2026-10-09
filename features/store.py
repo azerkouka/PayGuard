@@ -17,9 +17,10 @@ from collections.abc import Mapping
 import pandas as pd
 import redis
 
+from config import settings
 from features.definitions import HISTORY_SECONDS
 from features.online import UserState, compute_features, epoch_seconds
-from simulator.schema import P2P
+from schema import P2P
 
 RECENT_TTL_SECONDS = HISTORY_SECONDS  # wall clock; reads also filter by score
 
@@ -70,10 +71,18 @@ def recent_member(transaction_id: str, amount: float) -> str:
 
 class FeatureStore:
     def __init__(self, client: redis.Redis, state_ttl_seconds: int = 90 * 86400):
-        """`client` must be created with decode_responses=True."""
+        """`client` must be created with decode_responses=True (see `from_settings`)."""
         self.client = client
         self.state_ttl_seconds = state_ttl_seconds
         self._apply = client.register_script(APPLY_LUA)
+
+    @classmethod
+    def from_settings(cls) -> "FeatureStore":
+        """The store on the Redis instance described by the configuration."""
+        client = redis.Redis(
+            host=settings.redis_host, port=settings.redis_port, decode_responses=True
+        )
+        return cls(client, state_ttl_seconds=settings.state_ttl_days * 86400)
 
     def load(self, tx: Mapping) -> tuple[UserState, bool]:
         """The user's state, and whether `tx` is already part of it (a replayed message)."""

@@ -4,7 +4,7 @@
 # `make` is not installed by default on Windows: each target is one command you can run directly.
 
 .PHONY: help install up down logs reset check generate train stream dashboard \
-        bootstrap consume simulate api benchmark test lint
+        bootstrap consume simulate api benchmark test lint format
 
 help:
 	@echo "make install    install Python dependencies into the active environment"
@@ -13,10 +13,10 @@ help:
 	@echo "make train      train the model into models/"
 	@echo "make stream     run the live pipeline (history load + consumer + simulator)"
 	@echo "make dashboard  open the analyst dashboard (second terminal)"
-	@echo "make test / lint / benchmark / api / check / down / reset / logs"
+	@echo "make test / lint / format / benchmark / api / check / down / reset / logs"
 
 install:
-	python -m pip install -r requirements.txt
+	python -m pip install -r requirements-dev.txt
 
 # --- infrastructure: Kafka, Redis, PostgreSQL ---
 up:
@@ -62,7 +62,7 @@ simulate:
 	python -m simulator.stream --rate 50
 
 api:
-	python -m uvicorn api.main:app --host 127.0.0.1 --port 8010
+	python -m api
 
 # runs the pipeline for 2 minutes and prints latency and throughput
 benchmark:
@@ -74,3 +74,8 @@ test:
 
 lint:
 	python -m ruff check .
+	python -m ruff format --check .
+
+format:
+	python -m ruff check --fix .
+	python -m ruff format .

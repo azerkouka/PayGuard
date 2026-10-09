@@ -1,17 +1,9 @@
-"""Kafka consumer loop, and a features-only consumer: `python -m streaming.feature_consumer`.
+"""The Kafka consumer loop: read a batch, hand it over, commit.
 
-For each batch read from Kafka:
-    1. compute each transaction's features from the user's Redis state, then update that state
-    2. insert the raw transactions into PostgreSQL
-    3. commit the Kafka offsets
-Offsets are committed LAST, so a crash at any point replays the batch (at-least-once delivery).
-Replays are harmless: the Redis update and the PostgreSQL insert are both idempotent.
-
-The full pipeline (features + scoring + alerts) is `streaming.scoring_consumer`; it reuses the
-loop below. Run one or the other, not both: they share the same consumer group and user state.
+Offsets are committed only AFTER a batch has been handled, so a crash at any point replays the
+batch (at-least-once delivery). Whatever handles the batch must therefore be idempotent.
 """
 
-import argparse
 import logging
 import signal
 import time
@@ -19,12 +11,10 @@ from collections import Counter
 from collections.abc import Callable
 
 import psycopg
-import redis
 from confluent_kafka import Consumer
 
 from config import settings
-from features.store import FeatureStore
-from simulator.schema import decode_transaction
+from schema import decode_transaction
 
 log = logging.getLogger("consumer")
 
@@ -38,13 +28,6 @@ ON CONFLICT (transaction_id) DO NOTHING
 
 # handles one batch of decoded transactions and returns counters to add to the run's statistics
 BatchHandler = Callable[[list[dict]], dict[str, int]]
-
-
-def make_store() -> FeatureStore:
-    client = redis.Redis(
-        host=settings.redis_host, port=settings.redis_port, decode_responses=True
-    )
-    return FeatureStore(client, state_ttl_seconds=settings.state_ttl_days * 86400)
 
 
 def decode_batch(messages) -> list[dict]:
@@ -63,22 +46,27 @@ def decode_batch(messages) -> list[dict]:
             # a message that can never be decoded must not block the partition forever
             log.exception(
                 "skipping malformed message at %s[%s]@%s",
-                message.topic(), message.partition(), message.offset(),
-            )  # fmt: skip
+                message.topic(),
+                message.partition(),
+                message.offset(),
+            )
             continue
         tx["produced_at_ms"] = message.timestamp()[1]
         transactions.append(tx)
     return transactions
 
 
-def compute_batch_features(store: FeatureStore, transactions: list[dict]) -> list[dict | None]:
-    """Features for each transaction, in order. None marks a replayed transaction."""
-    return [store.process(tx) for tx in transactions]
-
-
 def insert_transactions(cur: psycopg.Cursor, transactions: list[dict]) -> None:
+    """Insert raw transactions; rows that already exist are left untouched."""
     rows = [{**tx, "timestamp": tx["timestamp"].to_pydatetime()} for tx in transactions]
     cur.executemany(INSERT_TRANSACTION, rows)
+
+
+def _install_stop_handlers(stop: Callable) -> None:
+    # SIGINT = Ctrl+C, SIGTERM = `docker stop`, SIGBREAK = Ctrl+Break on Windows
+    for name in ("SIGINT", "SIGTERM", "SIGBREAK"):
+        if hasattr(signal, name):
+            signal.signal(getattr(signal, name), stop)
 
 
 def consume(handle_batch: BatchHandler, idle_exit: float | None = None) -> Counter:
@@ -112,12 +100,9 @@ def consume(handle_batch: BatchHandler, idle_exit: float | None = None) -> Count
         log.info("signal %s received, finishing the current batch", signum)
         running = False
 
-    # SIGINT = Ctrl+C, SIGTERM = `docker stop`, SIGBREAK = Ctrl+Break on Windows
-    for name in ("SIGINT", "SIGTERM", "SIGBREAK"):
-        if hasattr(signal, name):
-            signal.signal(getattr(signal, name), stop)
+    _install_stop_handlers(stop)
 
-    stats = Counter()
+    stats: Counter = Counter()
     last_message = last_report = time.monotonic()
     try:
         while running:
@@ -147,30 +132,3 @@ def consume(handle_batch: BatchHandler, idle_exit: float | None = None) -> Count
         consumer.close()  # leaves the group cleanly so partitions are reassigned at once
         log.info("stopped: %s", dict(stats))
     return stats
-
-
-def run(idle_exit: float | None = None) -> Counter:
-    """Features only: update Redis and store raw transactions, no scoring."""
-    store = make_store()
-    with psycopg.connect(settings.postgres_dsn) as conn:
-
-        def handle_batch(transactions: list[dict]) -> dict[str, int]:
-            features = compute_batch_features(store, transactions)
-            with conn.cursor() as cur:
-                insert_transactions(cur, transactions)
-            conn.commit()
-            return {"replayed": sum(f is None for f in features)}
-
-        return consume(handle_batch, idle_exit)
-
-
-def main() -> None:
-    parser = argparse.ArgumentParser(description="Compute online features from Kafka.")
-    parser.add_argument("--idle-exit", type=float, help="exit after this many seconds idle")
-    args = parser.parse_args()
-    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(name)s %(message)s")
-    run(args.idle_exit)
-
-
-if __name__ == "__main__":
-    main()

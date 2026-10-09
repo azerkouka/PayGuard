@@ -2,8 +2,8 @@ import pandas as pd
 import pytest
 
 from features import FEATURES, compute_features_batch, replay
+from schema import MERCHANT, P2P
 from simulator.generate import generate_dataset
-from simulator.schema import MERCHANT, P2P
 
 
 @pytest.fixture(scope="module")

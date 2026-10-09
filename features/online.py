@@ -20,7 +20,7 @@ from features.definitions import (
     TYPE_FLAGS,
     WINDOWS,
 )
-from simulator.schema import P2P
+from schema import P2P
 
 
 @dataclass

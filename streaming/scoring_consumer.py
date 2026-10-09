@@ -22,7 +22,7 @@ from config import settings
 from features.online import compute_features
 from features.store import FeatureStore
 from ml.scoring import APPROVE, Scorer
-from streaming.feature_consumer import consume, insert_transactions, make_store
+from streaming.consumer import consume, insert_transactions
 
 log = logging.getLogger("consumer")
 
@@ -33,8 +33,16 @@ ON CONFLICT (transaction_id) DO NOTHING
 """
 
 # what an alert carries: enough for an analyst, and never the simulator's ground truth
-ALERT_FIELDS = ("transaction_id", "user_id", "amount_tnd", "type", "city", "device_id",
-                "merchant_id", "recipient_id")  # fmt: skip
+ALERT_FIELDS = (
+    "transaction_id",
+    "user_id",
+    "amount_tnd",
+    "type",
+    "city",
+    "device_id",
+    "merchant_id",
+    "recipient_id",
+)
 
 
 class PostgresSink:
@@ -110,10 +118,18 @@ def run(idle_exit: float | None = None):
     producer = Producer({"bootstrap.servers": settings.kafka_bootstrap_servers, "linger.ms": 5})
     with psycopg.connect(settings.postgres_dsn) as conn:
         pipeline = ScoringPipeline(
-            make_store(), scorer, PostgresSink(conn), producer, settings.kafka_alerts_topic
+            FeatureStore.from_settings(),
+            scorer,
+            PostgresSink(conn),
+            producer,
+            settings.kafka_alerts_topic,
         )
-        log.info("model %s, review >= %s, block >= %s",
-                 scorer.version, scorer.review_threshold, scorer.block_threshold)  # fmt: skip
+        log.info(
+            "model %s, review >= %s, block >= %s",
+            scorer.version,
+            scorer.review_threshold,
+            scorer.block_threshold,
+        )
         return consume(pipeline.handle_batch, idle_exit)
 
 

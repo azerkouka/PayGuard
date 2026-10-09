@@ -30,10 +30,11 @@ offline: simulator (batch, Parquet) ──► features (batch) ──► ml/trai
 
 ```
 config.py        central settings, read from environment variables with defaults
+schema.py        the transaction contract: field names, types, Kafka encoding
 simulator/       user/merchant profiles, fraud scenarios, batch (Parquet) and streaming (Kafka) modes
 features/        feature definitions, written ONCE and shared by offline training and online scoring
 ml/              training, evaluation, threshold selection, SHAP
-streaming/       Kafka consumers (features, scoring, alerts)
+streaming/       Kafka consumer loop, scoring pipeline (features, scoring, alerts), bootstrap
 api/             FastAPI scoring service
 dashboard/       Streamlit analyst dashboard
 infra/           init.sql and other infrastructure files
@@ -47,7 +48,7 @@ models/          trained model, feature list, metrics, plots (git-ignored)
 ## Commands
 
 ```
-make install     pip install -r requirements.txt (into the active virtual environment)
+make install     pip install -r requirements-dev.txt (into the active virtual environment)
 make up          start Kafka, Redis, PostgreSQL (docker compose up -d --wait)
 make generate    python -m simulator.generate --days 90 --seed 42
 make train       python -m ml.train
@@ -57,12 +58,13 @@ make dashboard   streamlit run dashboard/app.py (second terminal)
 make bootstrap   python -m streaming.bootstrap (load the history into Redis and PostgreSQL)
 make consume     python -m streaming.scoring_consumer (features + scoring + alerts)
 make simulate    python -m simulator.stream --rate 50 (simulator only)
-make api         uvicorn api.main:app --port 8010
+make api         python -m api (host and port from config.py)
 make benchmark   python -m scripts.benchmark (2 minutes, prints latency and throughput)
 make check       python -m scripts.check_infra
 make reset       wipe all volumes and start again
 make test        pytest
-make lint        ruff check .
+make lint        ruff check . and ruff format --check .
+make format      apply lint fixes and formatting
 ```
 
 From a clean clone the sequence is: `make install`, `make up`, `make generate`, `make train`,
@@ -73,12 +75,15 @@ From a clean clone the sequence is: `make install`, `make up`, `make generate`, 
 ## Conventions
 
 - All settings come from `config.py`. No hard-coded hosts, ports, paths or thresholds elsewhere.
+- Dependencies point one way: `schema`/`config` <- `features` <- `ml` <- `streaming`/`api`.
+  None of them may import `simulator`; only `simulator` and `scripts` do.
+- Runtime dependencies go in `requirements.txt`, tools in `requirements-dev.txt`.
 - Feature logic lives only in `features/`. Online and offline paths must give the same values
   (enforced by a parity test). A feature may only use data strictly before the transaction.
 - All randomness is seeded and reproducible.
 - Splits are temporal (train / validation / test by date), never random.
 - Headline metrics are PR-AUC and recall at 1% FPR, not accuracy.
-- Type hints on public functions, short docstrings, ruff-clean.
+- Type hints on public functions, short docstrings, ruff-clean and ruff-formatted.
 - Unit tests must run without Docker (use fakeredis and in-memory data).
 - Keep memory usage low: this runs on a laptop with limited RAM.
 

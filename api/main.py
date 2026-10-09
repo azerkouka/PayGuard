@@ -1,4 +1,4 @@
-"""Scoring API: `uvicorn api.main:app --port 8010`.
+"""Scoring API: `python -m api` (host and port come from the configuration).
 
 POST /score      score one transaction (read-only: the user's state is not modified)
 GET  /health     liveness, including Redis
@@ -8,7 +8,6 @@ GET  /model-info model version, thresholds and metrics
 import time
 from contextlib import asynccontextmanager
 from datetime import datetime
-from typing import Literal
 from zoneinfo import ZoneInfo
 
 import redis
@@ -18,10 +17,10 @@ from pydantic import BaseModel, Field, field_validator, model_validator
 from config import settings
 from features.online import compute_features
 from features.store import FeatureStore
-from ml.scoring import Scorer
-from simulator.schema import MERCHANT, P2P, TOPUP
+from ml.scoring import Decision, Scorer
+from schema import LOCAL_TIMEZONE, P2P, TransactionType
 
-LOCAL_TZ = ZoneInfo("Africa/Tunis")
+LOCAL_TZ = ZoneInfo(LOCAL_TIMEZONE)
 
 
 class Transaction(BaseModel):
@@ -31,7 +30,7 @@ class Transaction(BaseModel):
     merchant_id: str | None = None
     recipient_id: str | None = None
     amount_tnd: float = Field(gt=0)
-    type: Literal[P2P, MERCHANT, TOPUP]
+    type: TransactionType
     device_id: str = Field(min_length=1)
     city: str = Field(min_length=1)
 
@@ -61,7 +60,7 @@ class Reason(BaseModel):
 class ScoreResponse(BaseModel):
     transaction_id: str
     score: float
-    decision: Literal["approve", "review", "block"]
+    decision: Decision
     reasons: list[Reason]
     latency_ms: float
     model_version: str
@@ -74,10 +73,7 @@ def create_app(scorer: Scorer | None = None, store: FeatureStore | None = None) 
     async def lifespan(app: FastAPI):
         # loaded once here, reused by every request
         app.state.scorer = scorer or Scorer(settings.models_dir)
-        app.state.store = store or FeatureStore(
-            redis.Redis(host=settings.redis_host, port=settings.redis_port, decode_responses=True),
-            state_ttl_seconds=settings.state_ttl_days * 86400,
-        )
+        app.state.store = store or FeatureStore.from_settings()
         yield
 
     app = FastAPI(title="PayGuard scoring API", lifespan=lifespan)

@@ -3,7 +3,7 @@
 Every feature describes a transaction using only what the user did BEFORE it.
 """
 
-from simulator.schema import MERCHANT, P2P, TOPUP
+from schema import MERCHANT, P2P, TOPUP
 
 WINDOWS = {"5m": 5 * 60, "1h": 3600, "24h": 24 * 3600}  # seconds
 HISTORY_SECONDS = max(WINDOWS.values())  # how much recent history a user's state must keep

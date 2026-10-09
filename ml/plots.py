@@ -5,9 +5,9 @@ from pathlib import Path
 import matplotlib
 
 matplotlib.use("Agg")
-import matplotlib.pyplot as plt  # noqa: E402
-import numpy as np  # noqa: E402
-import pandas as pd  # noqa: E402
+import matplotlib.pyplot as plt
+import numpy as np
+import pandas as pd
 
 SURFACE = "#fcfcfb"
 INK = "#0b0b0b"
@@ -47,8 +47,9 @@ def plot_threshold_cost(
         (8.5, 4.5),
     )
     ax.plot(thresholds, costs / 1000, color=SERIES, linewidth=2)
-    ax.scatter([threshold], [best / 1000], s=50, color=SERIES, edgecolor=SURFACE, linewidth=2,
-               zorder=3)  # fmt: skip
+    ax.scatter(
+        [threshold], [best / 1000], s=50, color=SERIES, edgecolor=SURFACE, linewidth=2, zorder=3
+    )
     ax.annotate(
         f"minimum at {threshold:.3f}\n{best / 1000:,.1f}k TND",
         (threshold, best / 1000),

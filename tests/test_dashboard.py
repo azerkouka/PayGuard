@@ -8,22 +8,68 @@ from streamlit.testing.v1 import AppTest
 
 from dashboard import queries
 
-ALERT_COLUMNS = ["transaction_id", "scored_at", "decision", "score", "top_reasons", "latency_ms",
-                 "timestamp", "user_id", "amount_tnd", "type", "city", "device_id", "merchant_id",
-                 "recipient_id", "label"]  # fmt: skip
+ALERT_COLUMNS = [
+    "transaction_id",
+    "scored_at",
+    "decision",
+    "score",
+    "top_reasons",
+    "latency_ms",
+    "timestamp",
+    "user_id",
+    "amount_tnd",
+    "type",
+    "city",
+    "device_id",
+    "merchant_id",
+    "recipient_id",
+    "label",
+]
 
 
 def sample_alerts() -> pd.DataFrame:
     rows = [
-        ("tx-1", pd.Timestamp("2026-10-09 10:00:05", tz="UTC"), "block", 0.997,
-         [{"feature": "is_new_recipient", "description": "First transfer to this recipient",
-           "impact": 3.7}],
-         21.0, pd.Timestamp("2026-04-01 03:10:00"), "U00001", 1800.0, "p2p_transfer", "Tunis",
-         "dev_a", None, "U04999", None),
-        ("tx-2", pd.Timestamp("2026-10-09 10:00:01", tz="UTC"), "review", 0.61, [], 18.0,
-         pd.Timestamp("2026-04-01 02:50:00"), "U00002", 2.5, "merchant_payment", "Sfax",
-         "dev_b", "M0001", None, None),
-    ]  # fmt: skip
+        (
+            "tx-1",
+            pd.Timestamp("2026-10-09 10:00:05", tz="UTC"),
+            "block",
+            0.997,
+            [
+                {
+                    "feature": "is_new_recipient",
+                    "description": "First transfer to this recipient",
+                    "impact": 3.7,
+                }
+            ],
+            21.0,
+            pd.Timestamp("2026-04-01 03:10:00"),
+            "U00001",
+            1800.0,
+            "p2p_transfer",
+            "Tunis",
+            "dev_a",
+            None,
+            "U04999",
+            None,
+        ),
+        (
+            "tx-2",
+            pd.Timestamp("2026-10-09 10:00:01", tz="UTC"),
+            "review",
+            0.61,
+            [],
+            18.0,
+            pd.Timestamp("2026-04-01 02:50:00"),
+            "U00002",
+            2.5,
+            "merchant_payment",
+            "Sfax",
+            "dev_b",
+            "M0001",
+            None,
+            None,
+        ),
+    ]
     return pd.DataFrame(rows, columns=ALERT_COLUMNS)
 
 
@@ -46,8 +92,14 @@ def sample_history(user_id, until, limit=15) -> pd.DataFrame:
 def saved(monkeypatch):
     """Replace every query by canned data; returns the list of verdicts saved."""
     saved = []
-    kpis = {"tx_per_min": 3000.0, "alert_rate": 0.036, "p95_latency_ms": 42.1, "labeled": 4,
-            "confirmed": 3, "precision": 0.75}  # fmt: skip
+    kpis = {
+        "tx_per_min": 3000.0,
+        "alert_rate": 0.036,
+        "p95_latency_ms": 42.1,
+        "labeled": 4,
+        "confirmed": 3,
+        "precision": 0.75,
+    }
     monkeypatch.setattr(queries, "kpis", lambda window_minutes=5: kpis)
     monkeypatch.setattr(queries, "alerts", lambda *args, **kwargs: sample_alerts())
     monkeypatch.setattr(queries, "user_history", sample_history)
@@ -74,10 +126,17 @@ def test_page_shows_kpis_and_the_queue(saved):
 def test_page_without_alerts(saved, monkeypatch):
     monkeypatch.setattr(queries, "alerts", lambda *args, **kwargs: sample_alerts().iloc[:0])
     monkeypatch.setattr(
-        queries, "kpis",
-        lambda window_minutes=5: {"tx_per_min": 0.0, "alert_rate": None, "p95_latency_ms": None,
-                                  "labeled": 0, "confirmed": 0, "precision": None},
-    )  # fmt: skip
+        queries,
+        "kpis",
+        lambda window_minutes=5: {
+            "tx_per_min": 0.0,
+            "alert_rate": None,
+            "p95_latency_ms": None,
+            "labeled": 0,
+            "confirmed": 0,
+            "precision": None,
+        },
+    )
     app = run_app()
     assert not app.exception
     assert [m.value for m in app.metric] == ["0", "–", "–", "–"]

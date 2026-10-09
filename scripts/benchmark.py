@@ -1,8 +1,8 @@
 """Run the whole pipeline and measure it: `python -m scripts.benchmark --duration 120 --rate 50`.
 
-Starts the scoring consumer and the streaming simulator as separate processes, waits for the
-stream to end and the consumer to drain, then reads latency and throughput from the `scores`
-table. Needs `make up`, `make generate` and `make train` first.
+Starts the scoring consumer, streams transactions for the given duration, waits until every
+one of them is scored, then reads latency and throughput from the `scores` table.
+Needs `make up`, `make generate` and `make train` first.
 
 Latency is end to end: from the moment a transaction is published to Kafka to the moment its
 score is computed (queueing + features + model), as recorded in scores.latency_ms.
@@ -16,8 +16,13 @@ import time
 from datetime import UTC, datetime
 
 import psycopg
+from psycopg.rows import dict_row
 
 from config import settings
+from scripts.run_pipeline import check_prerequisites, start_consumer, stop_consumer
+from simulator.stream import make_producer, publish, transaction_stream
+
+DRAIN_TIMEOUT_SECONDS = 600
 
 RESULTS_SQL = """
 SELECT count(*)                                                        AS scored,
@@ -35,86 +40,88 @@ WHERE s.scored_at >= %s
 """
 
 
-def run_module(module: str, *args: str) -> subprocess.Popen:
-    return subprocess.Popen(
-        [sys.executable, "-m", module, *args], stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-        text=True,
-    )  # fmt: skip
+def wait_until_scored(conn: psycopg.Connection, expected: int, since: datetime) -> None:
+    """Block until `expected` transactions have a score, or give up after the drain timeout."""
+    deadline = time.monotonic() + DRAIN_TIMEOUT_SECONDS
+    while time.monotonic() < deadline:
+        scored = conn.execute(
+            "SELECT count(*) AS n FROM scores WHERE scored_at >= %s", (since,)
+        ).fetchone()["n"]
+        if scored >= expected:
+            return
+        time.sleep(0.5)
+    sys.exit(f"only {scored:,} of {expected:,} transactions were scored before the timeout")
 
 
-def last_line(process: subprocess.Popen) -> str:
-    lines = [line for line in process.communicate()[0].strip().splitlines() if line.strip()]
-    return lines[-1] if lines else ""
+def summarize(row: dict, duration: float, rate: float) -> dict:
+    seconds = float(row["seconds"]) or 1.0
+    return {
+        "measured_at": datetime.now(UTC).isoformat(timespec="seconds"),
+        "duration_s": duration,
+        "target_rate_tx_s": rate,
+        "transactions_scored": row["scored"],
+        "throughput_tx_s": round(row["scored"] / seconds, 1),
+        "latency_ms": {k: round(float(row[k]), 1) for k in ("p50", "p95", "p99", "max")},
+        "decisions": {"review": row["review"], "block": row["block"]},
+        "alert_rate": round((row["review"] + row["block"]) / row["scored"], 4),
+        "frauds": row["frauds"],
+        "frauds_flagged": row["frauds_flagged"],
+    }
+
+
+def print_report(results: dict) -> None:
+    latency, decisions = results["latency_ms"], results["decisions"]
+    print(f"\nscored       {results['transactions_scored']:,} transactions")
+    print(
+        f"throughput   {results['throughput_tx_s']:,} tx/s (target {results['target_rate_tx_s']:g})"
+    )
+    print(
+        f"latency      p50 {latency['p50']} ms   p95 {latency['p95']} ms   "
+        f"p99 {latency['p99']} ms   max {latency['max']} ms"
+    )
+    print(
+        f"decisions    {decisions['review']:,} review, {decisions['block']:,} block "
+        f"({results['alert_rate']:.1%} of traffic)"
+    )
+    print(f"frauds       {results['frauds_flagged']:,} of {results['frauds']:,} flagged")
 
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Benchmark the streaming pipeline.")
     parser.add_argument("--duration", type=float, default=120, help="seconds of streaming")
     parser.add_argument("--rate", type=float, default=settings.stream_rate, help="tx per second")
-    parser.add_argument("--no-bootstrap", action="store_true",
-                        help="keep the current Redis state")  # fmt: skip
+    parser.add_argument("--no-bootstrap", action="store_true", help="keep the current Redis state")
     parser.add_argument("--output", default="benchmark.json", help="file name in models/")
     args = parser.parse_args()
 
+    check_prerequisites()
     if not args.no_bootstrap:
         # every run restarts the simulated clock, so start from the same known state
-        print("bootstrapping Redis from the batch history...")
+        print("loading the history into Redis and PostgreSQL...")
         subprocess.run([sys.executable, "-m", "streaming.bootstrap"], check=True)
 
-    with psycopg.connect(settings.postgres_dsn) as conn:
-        started_at = conn.execute("SELECT now()").fetchone()[0]
+    with psycopg.connect(settings.postgres_dsn, row_factory=dict_row, autocommit=True) as conn:
+        started_at = conn.execute("SELECT now() AS now").fetchone()["now"]
+        # the consumer is ready before the first message: its startup is not counted as latency
+        consumer = start_consumer()
+        try:
+            print(f"streaming at {args.rate:g} tx/s for {args.duration:g}s...")
+            sent = publish(
+                transaction_stream(),
+                make_producer(),
+                settings.kafka_transactions_topic,
+                args.rate,
+                args.duration,
+            )
+            wait_until_scored(conn, sent, started_at)
+        finally:
+            stop_consumer(consumer)
+        row = conn.execute(RESULTS_SQL, (started_at,)).fetchone()
 
-    consumer = run_module("streaming.scoring_consumer", "--idle-exit", "8")
-    # wait until the consumer has loaded the model and joined the group, so that its startup
-    # time is not counted as latency
-    for line in consumer.stdout:
-        if "assigned partitions" in line:
-            break
-    else:
-        sys.exit("the consumer stopped before it was ready")
-
-    print(f"streaming at {args.rate:g} tx/s for {args.duration:g}s...")
-    stream = run_module("simulator.stream", "--rate", str(args.rate),
-                        "--duration", str(args.duration))  # fmt: skip
-    stream_summary = last_line(stream)
-    print(f"  simulator: {stream_summary}")
-    t0 = time.perf_counter()
-    consumer_summary = last_line(consumer)
-    print(f"  consumer:  {consumer_summary.split('consumer ', 1)[-1]}")
-    drain_seconds = time.perf_counter() - t0 - 8  # the consumer waits 8 s idle before exiting
-    if stream.returncode or consumer.returncode:
-        sys.exit("a process failed; see the lines above")
-
-    with psycopg.connect(settings.postgres_dsn, row_factory=psycopg.rows.dict_row) as conn:
-        r = conn.execute(RESULTS_SQL, (started_at,)).fetchone()
-    if not r["scored"]:
-        sys.exit("no transaction was scored")
-
-    seconds = float(r["seconds"]) or 1.0
-    results = {
-        "measured_at": datetime.now(UTC).isoformat(timespec="seconds"),
-        "duration_s": args.duration,
-        "target_rate_tx_s": args.rate,
-        "transactions_scored": r["scored"],
-        "throughput_tx_s": round(r["scored"] / seconds, 1),
-        "latency_ms": {k: round(float(r[k]), 1) for k in ("p50", "p95", "p99", "max")},
-        "decisions": {"review": r["review"], "block": r["block"]},
-        "alert_rate": round((r["review"] + r["block"]) / r["scored"], 4),
-        "frauds": r["frauds"],
-        "frauds_flagged": r["frauds_flagged"],
-        "consumer_drain_s": round(max(drain_seconds, 0.0), 1),
-    }
+    results = summarize(row, args.duration, args.rate)
     out = settings.models_dir / args.output
     out.write_text(json.dumps(results, indent=2))
-
-    lat = results["latency_ms"]
-    print(f"\nscored       {r['scored']:,} transactions")
-    print(f"throughput   {results['throughput_tx_s']:,} tx/s (target {args.rate:g})")
-    print(f"latency      p50 {lat['p50']} ms   p95 {lat['p95']} ms   p99 {lat['p99']} ms   "
-          f"max {lat['max']} ms")  # fmt: skip
-    print(f"decisions    {r['review']:,} review, {r['block']:,} block "
-          f"({results['alert_rate']:.1%} of traffic)")  # fmt: skip
-    print(f"frauds       {r['frauds_flagged']:,} of {r['frauds']:,} flagged")
+    print_report(results)
     print(f"written to {out}")
 
 

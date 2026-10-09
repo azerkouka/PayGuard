@@ -8,6 +8,7 @@ import math
 from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Literal
 
 import numpy as np
 import xgboost as xgb
@@ -15,10 +16,14 @@ import xgboost as xgb
 from features.definitions import NIGHT_END_HOUR, TYPE_FLAGS
 
 APPROVE, REVIEW, BLOCK = "approve", "review", "block"
+Decision = Literal["approve", "review", "block"]
 N_REASONS = 3
 
-TYPE_NAMES = {"type_p2p": "P2P transfer", "type_merchant": "merchant payment",
-              "type_topup": "mobile top-up"}  # fmt: skip
+TYPE_NAMES = {
+    "type_p2p": "P2P transfer",
+    "type_merchant": "merchant payment",
+    "type_topup": "mobile top-up",
+}
 WINDOW_NAMES = {"5m": "5 minutes", "1h": "hour", "24h": "24 hours"}
 
 # features describing the same fact are explained as one reason
@@ -67,7 +72,7 @@ def describe(group: str, f: Mapping[str, float]) -> str:
 @dataclass(frozen=True)
 class ScoreResult:
     score: float
-    decision: str
+    decision: Decision
     reasons: list[dict]  # [{"feature", "description", "impact"}], strongest first
 
 
@@ -85,7 +90,7 @@ class Scorer:
         # the saved model also holds the trees built after the early-stopping optimum
         self._trees = (0, self.booster.best_iteration + 1)
 
-    def decide(self, score: float) -> str:
+    def decide(self, score: float) -> Decision:
         if score >= self.block_threshold:
             return BLOCK
         if score >= self.review_threshold:

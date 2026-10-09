@@ -1,0 +1,4 @@
+# one line-ending convention for every platform (CI runs on Linux)
+* text=auto eol=lf
+*.png binary
+*.parquet binary

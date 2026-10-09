@@ -6,8 +6,8 @@
 import numpy as np
 import pandas as pd
 
+from schema import MERCHANT, P2P, TOPUP
 from simulator.profiles import N_CONTACTS, N_FAV_MERCHANTS, LifeEvents, Population
-from simulator.schema import MERCHANT, P2P, TOPUP
 
 IN_ACTIVE_HOURS_RATE = 0.93  # the rest happens at any hour
 SECOND_DEVICE_RATE = 0.2  # for users owning two devices
@@ -57,56 +57,92 @@ def _cities(pop: Population, events: LifeEvents, u: np.ndarray, ts: np.ndarray):
     return city, on_trip
 
 
-def build_legit(
-    pop: Population, events: LifeEvents, u: np.ndarray, ts: np.ndarray, rng: np.random.Generator
-) -> pd.DataFrame:
-    """Legit transactions for user indices `u` at timestamps `ts` (datetime64[s])."""
-    users = pop.users
-    n = len(u)
-
-    # type, from each user's preferences
-    r = rng.random(n)
+def _types(users: pd.DataFrame, u: np.ndarray, rng: np.random.Generator) -> np.ndarray:
+    """Transaction type, from each user's preferences."""
+    r = rng.random(len(u))
     p_p2p = users["p_p2p"].to_numpy()[u]
     p_merchant = users["p_merchant"].to_numpy()[u]
-    tx_type = np.where(r < p_p2p, P2P, np.where(r < p_p2p + p_merchant, MERCHANT, TOPUP))
-    is_p2p, is_merchant, is_topup = tx_type == P2P, tx_type == MERCHANT, tx_type == TOPUP
+    return np.where(r < p_p2p, P2P, np.where(r < p_p2p + p_merchant, MERCHANT, TOPUP))
 
-    # amount: log-normal with [amount_low, amount_high] as the 5th-95th percentile range
+
+def _amounts(
+    users: pd.DataFrame, u: np.ndarray, tx_type: np.ndarray, rng: np.random.Generator
+) -> np.ndarray:
+    """Log-normal amounts with [amount_low, amount_high] as the 5th-95th percentile range."""
+    n = len(u)
     log_low = np.log(users["amount_low"].to_numpy()[u])
     log_high = np.log(users["amount_high"].to_numpy()[u])
     sigma = (log_high - log_low) / (2 * 1.645)
     amount = np.exp((log_low + log_high) / 2 + sigma * rng.standard_normal(n))
+
     large = rng.random(n) < LARGE_RATE
     amount[large] *= rng.uniform(*LARGE_MULTIPLIER, large.sum())
-    micro = is_merchant & (rng.random(n) < MICRO_RATE)
+    micro = (tx_type == MERCHANT) & (rng.random(n) < MICRO_RATE)
     amount[micro] = rng.uniform(*MICRO_AMOUNT, micro.sum())
+    is_topup = tx_type == TOPUP
     amount[is_topup] = rng.choice(TOPUP_AMOUNTS, is_topup.sum(), p=TOPUP_P)
-    amount = np.round(np.maximum(amount, MIN_AMOUNT), 3)  # TND has 3 decimals (millimes)
+    return np.round(np.maximum(amount, MIN_AMOUNT), 3)  # TND has 3 decimals (millimes)
 
-    city, on_trip = _cities(pop, events, u, ts)
 
-    # device: usual one, sometimes the second one, the new phone after a phone change
-    use_second = (users["n_devices"].to_numpy()[u] == 2) & (rng.random(n) < SECOND_DEVICE_RATE)
+def _devices(
+    pop: Population, events: LifeEvents, u: np.ndarray, ts: np.ndarray, rng: np.random.Generator
+) -> np.ndarray:
+    """The usual device, sometimes the second one, the new phone after a phone change."""
+    users = pop.users
+    use_second = (users["n_devices"].to_numpy()[u] == 2) & (rng.random(len(u)) < SECOND_DEVICE_RATE)
     device = np.where(use_second, users["device_2"].to_numpy()[u], users["device_1"].to_numpy()[u])
     changed = ts >= events.phone_change_time[u]  # False when NaT
-    device = np.where(changed, events.new_device[u], device)
+    return np.where(changed, events.new_device[u], device)
 
-    # recipient: a usual contact, sometimes someone new (never a mule account)
+
+def _recipients(pop: Population, u: np.ndarray, rng: np.random.Generator) -> np.ndarray:
+    """A usual contact, sometimes someone new (never a mule account, never oneself)."""
+    n = len(u)
     recipient = pop.contacts[u, rng.integers(0, N_CONTACTS, n)]
     new_recipient = rng.random(n) < NEW_RECIPIENT_RATE
     recipient[new_recipient] = rng.choice(pop.non_mules, new_recipient.sum())
     to_self = recipient == u
     recipient[to_self] = pop.contacts[u[to_self], 0]
+    return recipient
 
-    # merchant: a favourite one, or any shop of the current city when travelling or exploring
+
+def _merchants(
+    pop: Population,
+    u: np.ndarray,
+    city: np.ndarray,
+    on_trip: np.ndarray,
+    is_topup: np.ndarray,
+    rng: np.random.Generator,
+) -> np.ndarray:
+    """A favourite merchant, any shop of the current city when travelling or exploring,
+    the user's telecom operator for a top-up."""
+    n = len(u)
     merchant = pop.fav_merchants[u, rng.integers(0, N_FAV_MERCHANTS, n)]
     elsewhere = on_trip | (rng.random(n) < NEW_MERCHANT_RATE)
     for c in np.unique(city[elsewhere]):
         mask = elsewhere & (city == c)
         merchant[mask] = rng.choice(pop.shops_by_city[c], mask.sum())
     merchant[is_topup] = pop.operator[u[is_topup]]
+    return merchant
 
-    user_ids = users["user_id"].to_numpy()
+
+def build_legit(
+    pop: Population, events: LifeEvents, u: np.ndarray, ts: np.ndarray, rng: np.random.Generator
+) -> pd.DataFrame:
+    """Legit transactions for user indices `u` at timestamps `ts` (datetime64[s]).
+
+    The helpers are called in a fixed order: each one draws from `rng`, so reordering them
+    would change the generated data.
+    """
+    tx_type = _types(pop.users, u, rng)
+    is_p2p = tx_type == P2P
+    amount = _amounts(pop.users, u, tx_type, rng)
+    city, on_trip = _cities(pop, events, u, ts)
+    device = _devices(pop, events, u, ts, rng)
+    recipient = _recipients(pop, u, rng)
+    merchant = _merchants(pop, u, city, on_trip, tx_type == TOPUP, rng)
+
+    user_ids = pop.users["user_id"].to_numpy()
     merchant_ids = pop.merchants["merchant_id"].to_numpy()
     return pd.DataFrame(
         {

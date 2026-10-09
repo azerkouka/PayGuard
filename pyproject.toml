@@ -11,4 +11,15 @@ line-length = 100
 target-version = "py313"
 
 [tool.ruff.lint]
-select = ["E", "F", "I", "UP", "B"]
+select = [
+    "E", "F", "I", "UP",  # style, errors, import order, modern syntax
+    "B", "SIM", "C4", "PIE", "RET", "PERF", "RUF",  # likely bugs and needless complexity
+    "ARG",  # unused arguments
+]
+ignore = [
+    "RUF001",  # dashes and arrows in user-facing strings are intentional
+]
+
+[tool.ruff.lint.per-file-ignores]
+# test doubles keep the signature of what they replace, used or not
+"tests/*" = ["ARG"]

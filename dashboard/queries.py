@@ -64,9 +64,23 @@ def alerts(decisions: list[str], include_labeled: bool = False, limit: int = 200
         """,
         (decisions, include_labeled, limit),
     )
-    columns = ["transaction_id", "scored_at", "decision", "score", "top_reasons", "latency_ms",
-               "timestamp", "user_id", "amount_tnd", "type", "city", "device_id", "merchant_id",
-               "recipient_id", "label"]  # fmt: skip
+    columns = [
+        "transaction_id",
+        "scored_at",
+        "decision",
+        "score",
+        "top_reasons",
+        "latency_ms",
+        "timestamp",
+        "user_id",
+        "amount_tnd",
+        "type",
+        "city",
+        "device_id",
+        "merchant_id",
+        "recipient_id",
+        "label",
+    ]
     df = pd.DataFrame(rows, columns=columns)
     df["amount_tnd"] = df["amount_tnd"].astype(float)
     return df
@@ -86,8 +100,16 @@ def user_history(user_id: str, until, limit: int = 15) -> pd.DataFrame:
         """,
         (user_id, until, limit),
     )
-    columns = ["transaction_id", "timestamp", "type", "amount_tnd", "city", "device_id",
-               "counterparty", "decision"]  # fmt: skip
+    columns = [
+        "transaction_id",
+        "timestamp",
+        "type",
+        "amount_tnd",
+        "city",
+        "device_id",
+        "counterparty",
+        "decision",
+    ]
     df = pd.DataFrame(rows, columns=columns)
     df["amount_tnd"] = df["amount_tnd"].astype(float)
     return df

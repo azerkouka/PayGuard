@@ -16,8 +16,8 @@ import pandas as pd
 import psycopg
 
 from config import settings
-from simulator.schema import COLUMNS
-from streaming.feature_consumer import make_store
+from features.store import FeatureStore
+from schema import COLUMNS
 
 
 def load_history_into_postgres(df: pd.DataFrame) -> int:
@@ -46,7 +46,7 @@ def main() -> None:
 
     t0 = time.perf_counter()
     df = pd.read_parquet(args.data)
-    n_users = make_store().bootstrap(df)
+    n_users = FeatureStore.from_settings().bootstrap(df)
     print(
         f"redis: state of {n_users:,} users from {len(df):,} transactions "
         f"(up to {df['timestamp'].max()}) in {time.perf_counter() - t0:.1f}s"
@@ -54,8 +54,10 @@ def main() -> None:
     if not args.skip_postgres:
         t0 = time.perf_counter()
         inserted = load_history_into_postgres(df)
-        print(f"postgres: {inserted:,} historical transactions added "
-              f"in {time.perf_counter() - t0:.1f}s")  # fmt: skip
+        print(
+            f"postgres: {inserted:,} historical transactions added "
+            f"in {time.perf_counter() - t0:.1f}s"
+        )
 
 
 if __name__ == "__main__":

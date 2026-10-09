@@ -5,7 +5,6 @@ import pytest
 from features import FEATURES, compute_features_batch
 from features.store import FeatureStore, user_keys
 from simulator.generate import generate_dataset
-from streaming.feature_consumer import compute_batch_features
 
 
 @pytest.fixture(scope="module")
@@ -19,7 +18,7 @@ def store():
 
 
 def online_features(store, df) -> pd.DataFrame:
-    rows = compute_batch_features(store, df.to_dict("records"))
+    rows = [store.process(tx) for tx in df.to_dict("records")]
     return pd.DataFrame(rows, index=df.index, columns=FEATURES)
 
 

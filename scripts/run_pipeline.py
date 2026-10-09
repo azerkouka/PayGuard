@@ -15,11 +15,12 @@ import sys
 import threading
 
 from config import settings
-from scripts.check_infra import check_kafka, check_postgres, check_redis
+from scripts.check_infra import check_kafka, check_postgres, check_redis, describe_error
 from simulator.stream import make_producer, publish, transaction_stream
 
 DATA = settings.data_dir / "transactions.parquet"
 MODEL = settings.models_dir / "model.json"
+CONSUMER_STOP_TIMEOUT_SECONDS = 20
 
 
 def check_prerequisites() -> None:
@@ -33,9 +34,8 @@ def check_prerequisites() -> None:
     for name, check in services.items():
         try:
             check()
-        except Exception as exc:
-            reason = str(exc).strip().splitlines()[0].encode("ascii", "replace").decode()
-            problems.append(f"{name} is not reachable ({reason}): run `make up`")
+        except Exception as exc:  # any failure means "not usable"; the reason is reported
+            problems.append(f"{name} is not usable ({describe_error(exc)}): run `make up`")
     if problems:
         sys.exit("cannot start the pipeline:\n  - " + "\n  - ".join(problems))
 
@@ -46,16 +46,21 @@ def start_consumer() -> subprocess.Popen:
     flags = subprocess.CREATE_NEW_PROCESS_GROUP if sys.platform == "win32" else 0
     consumer = subprocess.Popen(
         [sys.executable, "-m", "streaming.scoring_consumer"],
-        stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, creationflags=flags,
-    )  # fmt: skip
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        text=True,
+        creationflags=flags,
+    )
     for line in consumer.stdout:
         if "assigned partitions" in line:
             break
     else:
-        sys.exit("the consumer stopped before it was ready; run it alone to see why: "
-                 "python -m streaming.scoring_consumer")  # fmt: skip
+        sys.exit(
+            "the consumer stopped before it was ready; run it alone to see why: "
+            "python -m streaming.scoring_consumer"
+        )
 
-    def forward_output():
+    def forward_output() -> None:
         for line in consumer.stdout:
             if " consumer " in line:  # its own log lines, not library warnings
                 print(f"  [consumer] {line.split(' consumer ', 1)[1].rstrip()}")
@@ -66,22 +71,20 @@ def start_consumer() -> subprocess.Popen:
 
 def stop_consumer(consumer: subprocess.Popen) -> None:
     """Ask the consumer to finish its batch and commit, then wait for it."""
-    if consumer.poll() is None:
-        consumer.send_signal(
-            signal.CTRL_BREAK_EVENT if sys.platform == "win32" else signal.SIGTERM
-        )
-        try:
-            consumer.wait(timeout=20)
-        except subprocess.TimeoutExpired:
-            consumer.kill()
+    if consumer.poll() is not None:
+        return
+    consumer.send_signal(signal.CTRL_BREAK_EVENT if sys.platform == "win32" else signal.SIGTERM)
+    try:
+        consumer.wait(timeout=CONSUMER_STOP_TIMEOUT_SECONDS)
+    except subprocess.TimeoutExpired:
+        consumer.kill()
 
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Run consumer + simulator together.")
     parser.add_argument("--rate", type=float, default=settings.stream_rate, help="tx per second")
     parser.add_argument("--duration", type=float, help="stop after this many seconds")
-    parser.add_argument("--no-bootstrap", action="store_true",
-                        help="keep the current Redis state")  # fmt: skip
+    parser.add_argument("--no-bootstrap", action="store_true", help="keep the current Redis state")
     args = parser.parse_args()
 
     check_prerequisites()
@@ -93,10 +96,17 @@ def main() -> None:
     print("starting the scoring consumer...")
     consumer = start_consumer()
     try:
-        print(f"streaming at {args.rate:g} tx/s (Ctrl+C to stop). "
-              "Dashboard: `make dashboard` in another terminal.")  # fmt: skip
-        publish(transaction_stream(), make_producer(), settings.kafka_transactions_topic,
-                args.rate, args.duration)  # fmt: skip
+        print(
+            f"streaming at {args.rate:g} tx/s (Ctrl+C to stop). "
+            "Dashboard: `make dashboard` in another terminal."
+        )
+        publish(
+            transaction_stream(),
+            make_producer(),
+            settings.kafka_transactions_topic,
+            args.rate,
+            args.duration,
+        )
     finally:
         print("stopping the consumer...")
         stop_consumer(consumer)

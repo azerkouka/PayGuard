@@ -7,8 +7,8 @@ fast simulated time is published (at 50 tx/s, a simulated day takes about two mi
 """
 
 import argparse
+import itertools
 import time
-from collections import defaultdict
 from collections.abc import Iterable, Iterator
 
 import numpy as np
@@ -16,6 +16,7 @@ import pandas as pd
 from confluent_kafka import Producer
 
 from config import settings
+from schema import encode_transaction
 from simulator.generate import (
     DEFAULT_DAYS,
     DEFAULT_FRAUD_RATE,
@@ -23,10 +24,11 @@ from simulator.generate import (
     DEFAULT_START_DATE,
     DEFAULT_TRANSACTIONS,
     DEFAULT_USERS,
+    finalize,
     generate_window,
 )
 from simulator.profiles import build_population, plan_life_events
-from simulator.schema import encode_transaction, finalize
+from simulator.scenarios import FraudContext
 
 # by default the stream starts the day after the batch history ends
 STREAM_START_DATE = str(np.datetime64(DEFAULT_START_DATE) + np.timedelta64(DEFAULT_DAYS, "D"))
@@ -51,14 +53,13 @@ def transaction_stream(
     pop = build_population(n_users, n_merchants, np.random.default_rng(population_seed))
     rng = np.random.default_rng(seed)
     start = np.datetime64(start_date, "s")
-    events = plan_life_events(pop, start, HORIZON_DAYS, rng)
-    seen = defaultdict(set)
+    ctx = FraudContext(pop, plan_life_events(pop, start, HORIZON_DAYS, rng), rng)
 
     carry = None  # transactions generated for a day but dated after its end
-    for day in range(10**9):
+    for day in itertools.count():
         day_start = start + np.timedelta64(day, "D")
         day_end = pd.Timestamp(day_start + np.timedelta64(1, "D"))
-        df = generate_window(pop, events, day_start, 1, tx_per_day, fraud_rate, rng, seen)
+        df = generate_window(ctx, day_start, 1, tx_per_day, fraud_rate)
         if carry is not None and len(carry):
             df = pd.concat([carry, df], ignore_index=True)
         df = finalize(df, rng)

@@ -8,7 +8,7 @@ import numpy as np
 import pandas as pd
 
 from features.definitions import FEATURES, MAX_GAP_SECONDS, NIGHT_END_HOUR, TYPE_FLAGS, WINDOWS
-from simulator.schema import P2P
+from schema import P2P
 
 
 def compute_features_batch(df: pd.DataFrame) -> pd.DataFrame:

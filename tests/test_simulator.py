@@ -1,8 +1,7 @@
 import pandas as pd
 import pytest
 
-from simulator.generate import generate_dataset
-from simulator.schema import (
+from schema import (
     ACCOUNT_TAKEOVER,
     CARD_TESTING,
     COLUMNS,
@@ -11,8 +10,9 @@ from simulator.schema import (
     P2P,
     TRANSACTION_TYPES,
 )
+from simulator.generate import generate_dataset
 
-SMALL = dict(days=14, n_users=300, n_merchants=60, n_transactions=20_000)
+SMALL = {"days": 14, "n_users": 300, "n_merchants": 60, "n_transactions": 20_000}
 
 
 @pytest.fixture(scope="module")
@@ -65,7 +65,7 @@ def test_each_scenario_present(df):
 
 
 def test_reproducible():
-    small = dict(days=5, n_users=100, n_merchants=40, n_transactions=3000)
+    small = {"days": 5, "n_users": 100, "n_merchants": 40, "n_transactions": 3000}
     a, _ = generate_dataset(seed=7, **small)
     b, _ = generate_dataset(seed=7, **small)
     c, _ = generate_dataset(seed=8, **small)

@@ -74,9 +74,7 @@ class Settings:
     cost_missed_fraud: float = field(default_factory=lambda: _float("COST_MISSED_FRAUD", 200.0))
     cost_blocked_legit: float = field(default_factory=lambda: _float("COST_BLOCKED_LEGIT", 5.0))
     # a transaction is blocked outright only above the score where this share of flags is fraud
-    block_min_precision: float = field(
-        default_factory=lambda: _float("BLOCK_MIN_PRECISION", 0.95)
-    )
+    block_min_precision: float = field(default_factory=lambda: _float("BLOCK_MIN_PRECISION", 0.95))
 
     # Scoring API
     api_host: str = field(default_factory=lambda: _str("API_HOST", "127.0.0.1"))

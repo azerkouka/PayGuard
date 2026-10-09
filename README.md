@@ -48,10 +48,11 @@ flowchart LR
 
 | Component | Role |
 |---|---|
+| `schema.py` | The transaction contract (fields, types, Kafka encoding); depends on nothing |
 | `simulator/` | 5,000 users and 500 merchants with habits (city, devices, amounts, active hours) and three fraud scenarios |
 | `features/` | The 20 features, defined once and used by training, the consumer and the API |
 | `ml/` | Training, threshold selection, SHAP, and the scoring library |
-| `streaming/` | Kafka consumer: features, score, Redis update, PostgreSQL, alerts |
+| `streaming/` | Kafka consumer loop and the scoring pipeline: features, score, Redis update, PostgreSQL, alerts |
 | `api/` | `POST /score`, `GET /health`, `GET /model-info` |
 | `dashboard/` | Live alert queue, alert details, analyst verdicts |
 
@@ -76,7 +77,7 @@ make dashboard    # in a second terminal -> http://127.0.0.1:8501
 `make` is not installed by default on Windows. Each target is a single command:
 
 ```bash
-python -m pip install -r requirements.txt
+python -m pip install -r requirements-dev.txt
 docker compose up -d --wait
 python -m simulator.generate --days 90 --seed 42
 python -m ml.train
@@ -84,7 +85,7 @@ python -m scripts.run_pipeline --rate 50
 python -m streamlit run dashboard/app.py
 ```
 
-Other commands: `make test`, `make lint`, `make benchmark`, `make api` (scoring API on port
+Other commands: `make test`, `make lint`, `make format`, `make benchmark`, `make api` (scoring API on port
 8010, interactive docs at `/docs`), `make check` (are the three services reachable?), `make down`.
 Settings and ports are environment variables with defaults; see `.env.example`.
 
@@ -176,6 +177,12 @@ harmless: PostgreSQL inserts ignore duplicates, and the Redis update is one atom
 that does nothing if the transaction is already there. Killing the consumer mid-batch and
 restarting it loses nothing and double-counts nothing.
 
+**Dependencies point one way.**
+`schema.py` and `config.py` depend on nothing. `features/` builds on them, `ml/` on
+`features/`, and `streaming/` and `api/` on both. Nothing in that chain imports the simulator:
+it is one producer of transactions among others, and could be replaced by a real source
+without touching the scoring code.
+
 **The consumer calls the model as a library, not through the API.**
 This removes a network hop and a service that could be down, and keeps feature computation and
 state update in one place. The API exists for synchronous callers and shares the same scoring
@@ -211,5 +218,6 @@ code, so both give the same scores.
 
 ## Tests
 
-54 unit tests run without Docker (Redis is faked) in about 30 seconds, and on every push through
-GitHub Actions together with `ruff`.
+55 unit tests run without Docker (Redis is faked) in under a minute, and on every push through
+GitHub Actions together with the `ruff` linter and formatter check. The Kafka loop and the SQL
+are not covered by unit tests; they are exercised by `make benchmark` against the real services.
